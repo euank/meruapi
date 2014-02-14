@@ -1,0 +1,13 @@
+{
+  "database": {
+    "host": "localhost",
+    "username": "",
+    "password": "",
+    "database": "meru_email"
+  },
+  "signup_url": "http://mail.example.com/signup.html",
+  "signup_delete_url": "http://mail.example.com/signup_delete.html",
+  "signup_from": "invite@example.com",
+  "signup_signame": "The Management",
+  "subject": "Your requested invite code"
+}
