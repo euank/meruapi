@@ -4,6 +4,8 @@ gem 'mysql2'
 gem 'mail'
 gem 'grape'
 gem 'crypt3'
+gem 'sequel'
+gem 'mysqlplus'
 
 group :development do
   gem 'shotgun'

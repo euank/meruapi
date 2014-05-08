@@ -1,20 +1,28 @@
+require 'rubygems'
+
 require 'grape'
-require 'mysql2'
 require 'mail'
 require 'json'
+require 'sequel'
+require 'securerandom'
 
 
 module Meru
   class API < Grape::API
     version 'v1', using: :header, vendor: 'meru'
     format :json
-    conf = JSON.parse(File.read("config.json"))
-    dbconf = conf["database"]
+    @conf = JSON.parse(File.read("config.json"))
+    dbconf = @conf["database"]
+    DB = Sequel.connect(adapter: :mysql, host: dbconf["host"],
+                        database: dbconf["database"],
+                        user: dbconf["username"],
+                        password: dbconf["password"])
 
-    client = Mysql2::Client.new(:host => dbconf["host"],
-                                :username => dbconf["username"],
-                                :password => dbconf["password"],
-                                :database => dbconf["database"])
+    class Invite < Sequel::Model; end
+    class VirtualUser < Sequel::Model; end
+    class VirtualAlias < Sequel::Model; end
+    class VirtualDomain < Sequel::Model; end
+
 
     helpers do
       def valid_name(name)
@@ -23,11 +31,12 @@ module Meru
         # this is only used for creation and I'm okay
         # with limiting those crazy addresses from existing
         return false if name =~ /\-|@|^$/ || name.length > 100
-        Mail::Address.new(name) rescue false
-        true
+        # Transform this into a true/false
+        !!(Mail::Address.new(name) rescue false)
       end
 
       def valid_pass(pass)
+        # TODO, check against dict
         pass.length >= 8
       end
     end
@@ -41,82 +50,83 @@ module Meru
         requires :domain, type: Integer, desc: 'Domain'
       end
       post do
-        uname = client.escape(params[:user]).downcase.strip
-        password = client.escape(params[:password])
-        invite = client.escape(params[:invite])
-        domainid = params[:domain] # no need to escape Int
+        uname = params[:user].downcase.strip
+        password = params[:password]
+        invite = params[:invite]
+        domainid = params[:domain]
 
         error!("Invalid username", 400) unless valid_name(uname)
 
-        existing_user = client.query("SELECT
-  1
-FROM
-  virtual_users vu,
-  virtual_aliases va
-WHERE
-  vu.domain_id=#{domainid} AND
-  va.domain_id=#{domainid} AND
-  (
-    vu.user='#{uname}' OR
-    va.source='#{uname}'
-  )
-LIMIT 1")
-        error!("Username taken", 400) if existing_user.first
+        # Make sure the username is new
+        # Technically this might be a race condition;
+        # unfortunately, we can't enforce a uniqueness
+        # across both aliases and users as easily as a single
+        # unique constraint sql serverside, so this will do for now
+
+        if !(DB.from(:virtual_users, :virtual_aliases).
+                    where(virtual_users__domain_id: domainid).
+                    where(virtual_aliases__domain_id: domainid).
+                    where(Sequel.expr(virtual_users__user: uname) | 
+                      Sequel.expr(virtual_aliases__source: uname)).empty?)
+
+          error!("Username taken", 400)
+        end
 
         error!("Invalid password", 400) unless valid_pass(params[:password])
 
-        # No way to get affected rows or we could do this with one update,
-        # not a select and an update. That was the original intent of this
-        # table design
-        res = client.query("SELECT id FROM virtual_users WHERE invite_code='#{invite}' AND domain_id=#{domainid} LIMIT 1")
-        error!('Invalid invite') unless res.first
+        begin
+          DB.transaction do
+            invite = Invite.where("code = ? AND domain_id = ? AND status IS NULL",
+                                      invite, domainid).first
+            raise "Invalid invite" unless invite
 
-        client.query("UPDATE
-  virtual_users
-SET
-  user='#{uname}',
-  password=ENCRYPT('#{password}', CONCAT(\"$6$\", SUBSTRING(SHA(RAND()), -16))),
-  invite_code=NULL
-WHERE
-  id=#{res.first["id"]}
-LIMIT 1")
-        {ok: 1} # Kinda take it on faith nothing went horribly wrong :S
+
+            user = VirtualUser.new
+            user.domain_id = invite.domain_id
+            user.user = uname
+            user.password = password.crypt('$6$' + SecureRandom.hex(16))
+            user.save
+
+            invite.status = 1 # used
+            invite.to = user.id
+            invite.save
+          end
+        rescue Exception => e
+          error!(e.to_s, 400)
+        end
+
+        {ok: 1}
       end
+    end
 
-      resource :password do
-        desc 'Change account password'
-        params do
-          requires :email, type: String, desc: "Email address"
-          requires :oldpassword, type: String, desc: "Current password"
-          requires :newpassword, type: String, desc: "New password"
-        end
-        post do
-          email = params[:email].split("@").map{|x| client.escape(x)}
-          oldpass = params[:oldpassword] # not used in sql query
-          newpass = client.escape(params[:newpassword])
-          email.size == 2 || error!("Invalid email", 400)
-          validate_pass(params[:newpassword]) || error!("Invalid new pass", 400)
-          user = client.query("SELECT
-            u.id AS id,
-            u.password AS password
-          FROM
-            virtual_users u,
-            virtual_domains d
-          WHERE
-            u.domain_id = d.id AND
-            d.name='#{email[1]}' AND
-            u.user='#{email[0]}'
-          LIMIT 1").first
-          error!("Invalid user") unless user
+    resource :password do
+      desc 'Change account password'
+      params do
+        requires :email, type: String, desc: "Email address"
+        requires :oldpassword, type: String, desc: "Current password"
+        requires :newpassword, type: String, desc: "New password"
+      end
+      post do
+        email = params[:email].split("@").map(&:downcase)
+        oldpass = params[:oldpassword]
+        newpass = params[:newpassword]
+        email.size == 2 || error!("Invalid email", 400)
+        validate_pass(params[:newpassword]) || error!("Invalid new pass", 400)
 
-          magic, salt = user["password"].split('$')[1,2]
-          oldpass.crypt("$#{magic}$#{salt}") == user["password"] || error!("Invalid password")
+        user = VirtualUser.join(VirtualDomain, id: :domain_id).
+          where(name: email[1]).
+          where(user: email[0]).first
 
-          client.query("UPDATE virtual_users SET
-          password=ENCRYPT('#{newpass}', CONCAT(\"$6$\", SUBSTRING(SHA(RAND()), -16)))
-          WHERE id=#{user["id"]}")
-          {ok: 1}
-        end
+        error!("Invalid user") unless user
+
+        # Check their old password is right
+        magic, salt = user[:password].split('$')[1,2]
+        oldpass.crypt("$#{magic}$#{salt}") == user[:password] || error!("Invalid password")
+
+        # Update em
+        user.password = newpass.crypt('$6$' + SecureRandom.hex(16))
+        user.save
+        {ok: 1}
       end
     end
 
@@ -126,9 +136,9 @@ LIMIT 1")
         requires :id, type: Integer, desc: "Domain id"
       end
       get do
-        dname = client.query("SELECT name FROM virtual_domains WHERE id=#{params[:id]}").first
-
-        dname || {error: "No such domain"}
+        domain = VirtualDomain.where(id: params[:id]).first
+        error!("No such domain", 400) unless domain
+        {ok: 1, name: domain.name} || error!("No such domain", 400)
       end
     end
 
@@ -141,23 +151,21 @@ LIMIT 1")
       post do
         email = params[:email].split("@").map{|x| client.escape(x)}
 
-        # Verify this is actually a user of our site
-        user = client.query("SELECT
-          u.domain_id AS domain_id
-        FROM
-          virtual_users u,
-          virtual_domains d
-        WHERE
-          u.domain_id = d.id AND
-          d.name='#{email[1]}' AND
-          u.user='#{email[0]}'
-        LIMIT 1").first
-        error!("No such email", 400) unless user
-        domain_id = user["domain_id"]
+        from = VirtualUser.join(VirtualDomain, id: :domain_id).
+          where(name: email[1]).
+          where(user: email[0]).first
+
+        error!("No such email", 400) unless from
+        domain_id = from[:domain_id] # No cross-domain invites
 
         # User exists. Create an invite for this domain and send it to them
-        invite_code = Random.new.bytes(35).split('').map{|i| i.ord.to_s(16)}.join[0...35]
-        client.query("INSERT INTO virtual_users(domain_id, invite_code) VALUES(#{domain_id}, '#{invite_code}'")
+        invite_code = SecureRandom.hex(20)
+        invite = Invite.new
+
+        invite.from = from.id
+        invite.code = invite_code
+        invite.domain_id = domain_id
+        invite.save rescue error!("Error creating invite! Sorry")
 
         # Now email the invite to the user so they can pass it on to whoever
         mail = Mail.new do
