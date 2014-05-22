@@ -13,7 +13,7 @@ module Meru
     format :json
     @conf = JSON.parse(File.read("config.json"))
     dbconf = @conf["database"]
-    DB = Sequel.connect(adapter: :mysql, host: dbconf["host"],
+    DB = Sequel.connect(adapter: :mysql2, host: dbconf["host"],
                         database: dbconf["database"],
                         user: dbconf["username"],
                         password: dbconf["password"])
@@ -22,7 +22,6 @@ module Meru
     class VirtualUser < Sequel::Model; end
     class VirtualAlias < Sequel::Model; end
     class VirtualDomain < Sequel::Model; end
-
 
     helpers do
       def valid_name(name)

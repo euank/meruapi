@@ -7,11 +7,18 @@ conf = JSON.parse(File.read("config.json"))
 dbconf = conf["database"]
 
 
-DB = Sequel.connect(adapter: :mysql, host: dbconf["host"],
+DB = Sequel.connect(adapter: :mysql2, host: dbconf["host"],
                     database: dbconf["database"],
                     user: dbconf["username"],
                     password: dbconf["password"])
 
+
+if ARGV[0] == '--force'
+  DB.drop_table :virtual_domains
+  DB.drop_table :virtual_users
+  DB.drop_table :virtual_aliases
+  DB.drop_table :invites
+end
 
 
 DB.create_table :virtual_domains do
