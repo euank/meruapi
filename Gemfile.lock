@@ -39,7 +39,6 @@ GEM
     multi_json (1.8.4)
     multi_xml (0.5.5)
     mysql2 (0.3.15)
-    mysqlplus (0.1.2)
     polyglot (0.3.3)
     rack (1.5.2)
     rack-accept (0.4.5)
@@ -74,7 +73,6 @@ DEPENDENCIES
   grape
   mail
   mysql2
-  mysqlplus
   sequel
   shotgun
   unicorn

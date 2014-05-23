@@ -5,6 +5,7 @@
     "password": "",
     "database": "meru_email"
   },
+  "setup_pass": "only used at setup, useless after",
   "signup_url": "http://mail.example.com/signup.html",
   "signup_delete_url": "http://mail.example.com/signup_delete.html",
   "signup_from": "invite@example.com",
