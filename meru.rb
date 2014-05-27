@@ -262,7 +262,8 @@ module Meru
         requires :email, type: String, desc: 'Your email'
       end
       post do
-        email = params[:email].split("@").map{|x| client.escape(x)}
+        emailstr = params[:email]
+        email = emailstr.split("@")
 
         from = VirtualUser.join(VirtualDomain, id: :domain_id).
           where(name: email[1]).
@@ -283,23 +284,24 @@ module Meru
         # Now email the invite to the user so they can pass it on to whoever
         mail = Mail.new do
           from conf["signup_from"]
-          to params[:email]
+          to emailstr
           subject conf["subject"]
         end
         mail[:body] = <<EOM
 Someone has requested an invite code with your address.
-If this was not you, please go here: #{conf["signup_delete_url"] + "?invite=" + invite_code + "&domain=" + domain_id} to remove it.
+If this was not you, please go here: #{conf["signup_delete_url"] + "?invite=" + invite_code + "&domain=" + domain_id.to_s} to remove it.
 
 If it was you, please provide the link below to the person who wants to signup.
 Please recall that this works on a system of trust. Only invite a person whom you
 feel sure will not abuse the service. Spam will not be tolerated.
-#{conf["signup_url"] + '?invite='+invite_code+'&domain='+domain_id}
+#{conf["signup_url"] + '?invite='+invite_code+'&domain='+domain_id.to_s}
 
 Best,
 #{conf["signup_signame"]}
 EOM
         mail.delivery_method :sendmail
-        mail.delever!
+        mail.deliver! rescue "Unable to deliver the invite email; please contact the admin and/or try again later"
+        {ok: 1} # we hope
       end
     end
   end
