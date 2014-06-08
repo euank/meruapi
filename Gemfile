@@ -3,7 +3,7 @@ source "https://rubygems.org"
 gem 'mail'
 gem 'grape'
 gem 'crypt3'
-gem 'mysql2'
+gem 'sequel_pg'
 gem 'sequel'
 
 group :development do

@@ -1,7 +1,11 @@
 meruapi
 =======
 
-A ruby Grape API for managing the users of a mysql-backed mail server
+A ruby Grape API for managing the users of a postgres-backed mail server.
+
+It makes the assumption that your DB schema is akin to the one used by
+iRedMail-0.8.7 if you select postgresql as your database scheme. It also will
+modify the scheme (oh so minorly) by creating a new table named "invites".
 
 It only provides the api. Something else(html+js likely) has to actually
 interact with the api.
